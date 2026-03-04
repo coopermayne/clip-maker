@@ -1,0 +1,35 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      - name: Download ffmpeg
+        run: |
+          curl -L -o ffmpeg.zip https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
+          7z x ffmpeg.zip -offmpeg_extract
+          Get-ChildItem -Recurse -Filter ffmpeg.exe -Path ffmpeg_extract | Copy-Item -Destination .
+        shell: pwsh
+
+      - name: Build EXE
+        run: pyinstaller --onefile --windowed --add-binary "ffmpeg.exe;." --name "VideoClipMaker" clip_maker.py
+
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoClipMaker
+          path: dist/VideoClipMaker.exe
