@@ -15,8 +15,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install PyInstaller
-        run: pip install pyinstaller
+      - name: Install dependencies
+        run: pip install pyinstaller windnd
 
       - name: Download ffmpeg
         run: |
@@ -26,7 +26,7 @@ jobs:
         shell: pwsh
 
       - name: Build EXE
-        run: pyinstaller --onefile --windowed --add-binary "ffmpeg.exe;." --name "VideoClipMaker" clip_maker.py
+        run: pyinstaller --onefile --windowed --hidden-import windnd --add-binary "ffmpeg.exe;." --name "VideoClipMaker" clip_maker.py
 
       - name: Upload EXE
         uses: actions/upload-artifact@v4

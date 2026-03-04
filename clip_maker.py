@@ -10,6 +10,12 @@ import threading
 import tkinter as tk
 from tkinter import ttk, filedialog
 
+try:
+    import windnd
+    HAS_DND = True
+except ImportError:
+    HAS_DND = False
+
 
 def resource_path(filename):
     """Get path to bundled resource (works for PyInstaller and dev mode)."""
@@ -125,16 +131,33 @@ class ClipMakerApp:
 
         row = 0
 
-        # Video File
-        ttk.Label(form, text="Video File:").grid(row=row, column=0, sticky="w", pady=fp)
-        file_frame = ttk.Frame(form)
-        file_frame.grid(row=row, column=1, sticky="ew", pady=fp, padx=(8, 0))
-        file_frame.columnconfigure(0, weight=1)
+        # Video File — drop zone + browse
         self.file_var = tk.StringVar()
-        self.file_entry = ttk.Entry(file_frame, textvariable=self.file_var, font=("Helvetica", 13))
-        self.file_entry.grid(row=0, column=0, sticky="ew")
-        ttk.Button(file_frame, text="Browse", command=self._browse).grid(row=0, column=1, padx=(6, 0))
-        row += 1
+        drop_frame = tk.Frame(form, bg="#e0e7ff", highlightbackground="#6366f1",
+                              highlightthickness=2, cursor="hand2")
+        drop_frame.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(fp, 4))
+        drop_frame.columnconfigure(0, weight=1)
+
+        self.drop_label = tk.Label(
+            drop_frame, text="Drag & drop a video file here\nor click Browse",
+            bg="#e0e7ff", fg="#4338ca", font=("Helvetica", 12), pady=18,
+        )
+        self.drop_label.pack(fill="both", expand=True)
+        drop_frame.bind("<Button-1>", lambda e: self._browse())
+        self.drop_label.bind("<Button-1>", lambda e: self._browse())
+
+        self.file_label = tk.Label(
+            form, textvariable=self.file_var, bg="#f5f5f5", fg="#333",
+            font=("Helvetica", 10), anchor="w", wraplength=400,
+        )
+        self.file_label.grid(row=row + 1, column=0, columnspan=2, sticky="ew", pady=(0, fp))
+
+        if HAS_DND:
+            windnd.hook_dropfiles(drop_frame, self._on_drop)
+            windnd.hook_dropfiles(self.drop_label, self._on_drop)
+
+        self._drop_frame = drop_frame
+        row += 2
 
         # Start Time
         ttk.Label(form, text="Start Time:").grid(row=row, column=0, sticky="w", pady=fp)
@@ -195,6 +218,22 @@ class ClipMakerApp:
         )
         self.status_label.pack(side="left", padx=(8, 0))
 
+    def _on_drop(self, files):
+        """Handle files dropped onto the window."""
+        if files:
+            path = files[0]
+            if isinstance(path, bytes):
+                path = path.decode("utf-8", errors="replace")
+            path = path.strip().strip('"')
+            self.file_var.set(path)
+            self._update_drop_zone(path)
+
+    def _update_drop_zone(self, path):
+        """Update the drop zone appearance after a file is selected."""
+        self.drop_label.config(text="File selected (drop another to change)", fg="#16a34a")
+        self._drop_frame.config(bg="#dcfce7", highlightbackground="#16a34a")
+        self.drop_label.config(bg="#dcfce7")
+
     def _browse(self):
         path = filedialog.askopenfilename(
             title="Select a video file",
@@ -205,16 +244,19 @@ class ClipMakerApp:
         )
         if path:
             self.file_var.set(path)
+            self._update_drop_zone(path)
 
     def _set_status(self, msg, color="#2563eb"):
         self.status_var.set(msg)
         self.status_label.config(fg=color)
 
     def _validate(self):
-        input_file = self.file_var.get().strip()
+        input_file = self.file_var.get().strip().strip('"')
         if not input_file:
             raise ValueError("Please select a video file.")
-        if not os.path.isfile(input_file):
+        # Allow UNC paths (\\server\share) and mapped drives — skip check for network paths
+        is_network = input_file.startswith("\\\\") or (len(input_file) >= 2 and input_file[1] == ":" and not os.path.isfile(input_file))
+        if not is_network and not os.path.isfile(input_file):
             raise ValueError(f"File not found: {input_file}")
 
         start_str = self.start_var.get().strip()
