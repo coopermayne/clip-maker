@@ -76,6 +76,7 @@ class ClipMakerApp:
         self.ffmpeg_path = self._find_ffmpeg()
         self._setup_styles()
         self._build_ui()
+        self._setup_auto_name()
         self.root.update_idletasks()
         self._center_window()
 
@@ -186,12 +187,13 @@ class ClipMakerApp:
         )
         row += 1
 
-        # Output Name
+        # Output Name (auto-generated, editable)
         ttk.Label(form, text="Output Name:").grid(row=row, column=0, sticky="w", pady=fp)
         out_frame = ttk.Frame(form)
-        out_frame.grid(row=row, column=1, sticky="w", pady=fp, padx=(8, 0))
+        out_frame.grid(row=row, column=1, sticky="ew", pady=fp, padx=(8, 0))
+        out_frame.columnconfigure(0, weight=1)
         self.out_var = tk.StringVar()
-        ttk.Entry(out_frame, textvariable=self.out_var, width=22, font=("Helvetica", 13)).pack(side="left")
+        ttk.Entry(out_frame, textvariable=self.out_var, font=("Helvetica", 13)).pack(side="left", fill="x", expand=True)
         ttk.Label(out_frame, text=".mp4", style="Hint.TLabel").pack(side="left", padx=(4, 0))
 
         # --- Separator ---
@@ -218,6 +220,11 @@ class ClipMakerApp:
         )
         self.status_label.pack(side="left", padx=(8, 0))
 
+    def _setup_auto_name(self):
+        """Auto-update output name when timestamps or speed change."""
+        for var in (self.start_var, self.end_var, self.speed_var):
+            var.trace_add("write", lambda *_: self._update_output_name())
+
     def _on_drop(self, files):
         """Handle files dropped onto the window."""
         if files:
@@ -227,6 +234,7 @@ class ClipMakerApp:
             path = path.strip().strip('"')
             self.file_var.set(path)
             self._update_drop_zone(path)
+            self._update_output_name()
 
     def _update_drop_zone(self, path):
         """Update the drop zone appearance after a file is selected."""
@@ -245,6 +253,28 @@ class ClipMakerApp:
         if path:
             self.file_var.set(path)
             self._update_drop_zone(path)
+            self._update_output_name()
+
+    def _format_ts_for_filename(self, ts):
+        """Convert H:MM:SS to H.MM.SS for filenames."""
+        return ts.strip().replace(":", ".")
+
+    def _update_output_name(self):
+        """Auto-generate output name from file, timestamps, and speed."""
+        input_file = self.file_var.get().strip()
+        if not input_file:
+            return
+        # Handle both Unix and Windows path separators
+        filename = input_file.replace("\\", "/").rsplit("/", 1)[-1]
+        base = os.path.splitext(filename)[0]
+        start = self._format_ts_for_filename(self.start_var.get())
+        end = self._format_ts_for_filename(self.end_var.get())
+        try:
+            speed = float(self.speed_var.get().strip())
+        except ValueError:
+            speed = 1.0
+        speed_str = f"{int(speed * 100)}pct"
+        self.out_var.set(f"{base}_{start}-{end}_{speed_str}")
 
     def _set_status(self, msg, color="#2563eb"):
         self.status_var.set(msg)
