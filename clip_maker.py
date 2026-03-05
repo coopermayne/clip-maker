@@ -195,13 +195,12 @@ class ClipMakerApp:
         start_frame.grid(row=row, column=1, sticky="ew", pady=fp, padx=(8, 0))
         self.start_var = tk.StringVar(value="0:00:00")
         ttk.Entry(start_frame, textvariable=self.start_var, width=10, font=("Helvetica", 13)).pack(side="left")
-        self.start_slider = tk.Scale(
+        self.start_slider = ttk.Scale(
             start_frame, from_=0, to=0, orient="horizontal", length=200,
-            showvalue=False, bg="#f5f5f5", highlightthickness=0,
-            troughcolor="#d1d5db", state="disabled",
             command=self._on_start_slider_move,
         )
         self.start_slider.pack(side="left", padx=(10, 0), fill="x", expand=True)
+        self.start_slider.state(["disabled"])
         row += 1
 
         # End Time
@@ -210,13 +209,12 @@ class ClipMakerApp:
         end_frame.grid(row=row, column=1, sticky="ew", pady=fp, padx=(8, 0))
         self.end_var = tk.StringVar(value="0:00:00")
         ttk.Entry(end_frame, textvariable=self.end_var, width=10, font=("Helvetica", 13)).pack(side="left")
-        self.end_slider = tk.Scale(
+        self.end_slider = ttk.Scale(
             end_frame, from_=0, to=0, orient="horizontal", length=200,
-            showvalue=False, bg="#f5f5f5", highlightthickness=0,
-            troughcolor="#d1d5db", state="disabled",
             command=self._on_end_slider_move,
         )
         self.end_slider.pack(side="left", padx=(10, 0), fill="x", expand=True)
+        self.end_slider.state(["disabled"])
         row += 1
 
         # Speed
@@ -371,8 +369,10 @@ class ClipMakerApp:
     def _set_duration(self, duration):
         """Set video duration and enable/configure sliders."""
         self.video_duration = int(duration)
-        self.start_slider.config(to=self.video_duration, state="normal")
-        self.end_slider.config(to=self.video_duration, state="normal")
+        self.start_slider.config(to=self.video_duration)
+        self.end_slider.config(to=self.video_duration)
+        self.start_slider.state(["!disabled"])
+        self.end_slider.state(["!disabled"])
         self.start_slider.set(0)
         self.end_slider.set(self.video_duration)
         self._syncing_slider = True
@@ -430,7 +430,7 @@ class ClipMakerApp:
         except ValueError:
             speed = 1.0
         speed_str = f"{int(speed * 100)}pct"
-        self.out_var.set(f"{base}_{start}-{end}_{speed_str}")
+        self.out_var.set(f"{base}_CLIP_{start}-{end}_{speed_str}")
 
     def _set_status(self, msg, color="#2563eb"):
         self.status_var.set(msg)
