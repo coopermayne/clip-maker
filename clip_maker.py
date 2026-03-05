@@ -63,9 +63,27 @@ def build_ffmpeg_cmd(ffmpeg_path, input_file, start, end, speed, output_file):
     return cmd
 
 
+def seconds_to_timestamp(secs):
+    """Convert total seconds (int or float) to H:MM:SS string."""
+    secs = int(secs)
+    h = secs // 3600
+    m = (secs % 3600) // 60
+    s = secs % 60
+    return f"{h}:{m:02d}:{s:02d}"
+
+
 class ClipMakerApp:
     PADDING = 20
     FIELD_PAD = 8
+
+    SPEED_PRESETS = [
+        ("1x", 1.0),
+        ("75%", 0.75),
+        ("66%", 0.6667),
+        ("50%", 0.5),
+        ("33%", 0.333),
+        ("25%", 0.25),
+    ]
 
     def __init__(self, root):
         self.root = root
@@ -74,9 +92,13 @@ class ClipMakerApp:
         self.root.configure(bg="#f5f5f5")
 
         self.ffmpeg_path = self._find_ffmpeg()
+        self.video_duration = 0
+        self._syncing_slider = False
+        self._active_speed_btn = None
         self._setup_styles()
         self._build_ui()
         self._setup_auto_name()
+        self._setup_slider_sync()
         self.root.update_idletasks()
         self._center_window()
 
@@ -86,6 +108,13 @@ class ClipMakerApp:
             if os.path.isfile(path):
                 return path
         return "ffmpeg"
+
+    def _find_ffprobe(self):
+        for name in ("ffprobe.exe", "ffprobe"):
+            path = resource_path(name)
+            if os.path.isfile(path):
+                return path
+        return "ffprobe"
 
     def _setup_styles(self):
         style = ttk.Style()
@@ -162,18 +191,32 @@ class ClipMakerApp:
 
         # Start Time
         ttk.Label(form, text="Start Time:").grid(row=row, column=0, sticky="w", pady=fp)
+        start_frame = ttk.Frame(form)
+        start_frame.grid(row=row, column=1, sticky="ew", pady=fp, padx=(8, 0))
         self.start_var = tk.StringVar(value="0:00:00")
-        ttk.Entry(form, textvariable=self.start_var, width=12, font=("Helvetica", 13)).grid(
-            row=row, column=1, sticky="w", pady=fp, padx=(8, 0)
+        ttk.Entry(start_frame, textvariable=self.start_var, width=10, font=("Helvetica", 13)).pack(side="left")
+        self.start_slider = tk.Scale(
+            start_frame, from_=0, to=0, orient="horizontal", length=200,
+            showvalue=False, bg="#f5f5f5", highlightthickness=0,
+            troughcolor="#d1d5db", state="disabled",
+            command=self._on_start_slider_move,
         )
+        self.start_slider.pack(side="left", padx=(10, 0), fill="x", expand=True)
         row += 1
 
         # End Time
         ttk.Label(form, text="End Time:").grid(row=row, column=0, sticky="w", pady=fp)
+        end_frame = ttk.Frame(form)
+        end_frame.grid(row=row, column=1, sticky="ew", pady=fp, padx=(8, 0))
         self.end_var = tk.StringVar(value="0:00:00")
-        ttk.Entry(form, textvariable=self.end_var, width=12, font=("Helvetica", 13)).grid(
-            row=row, column=1, sticky="w", pady=fp, padx=(8, 0)
+        ttk.Entry(end_frame, textvariable=self.end_var, width=10, font=("Helvetica", 13)).pack(side="left")
+        self.end_slider = tk.Scale(
+            end_frame, from_=0, to=0, orient="horizontal", length=200,
+            showvalue=False, bg="#f5f5f5", highlightthickness=0,
+            troughcolor="#d1d5db", state="disabled",
+            command=self._on_end_slider_move,
         )
+        self.end_slider.pack(side="left", padx=(10, 0), fill="x", expand=True)
         row += 1
 
         # Speed
@@ -185,6 +228,21 @@ class ClipMakerApp:
         ttk.Label(speed_frame, text="1 = normal, .5 = half speed", style="Hint.TLabel").pack(
             side="left", padx=(10, 0)
         )
+        row += 1
+
+        # Speed preset buttons
+        preset_frame = ttk.Frame(form)
+        preset_frame.grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, fp), padx=(0, 0))
+        ttk.Label(preset_frame, text="Presets:", style="Hint.TLabel").pack(side="left", padx=(0, 8))
+        self._speed_buttons = {}
+        for label, value in self.SPEED_PRESETS:
+            btn = tk.Button(
+                preset_frame, text=label, font=("Helvetica", 11), width=4,
+                relief="groove", bg="#e5e7eb", fg="#333", cursor="hand2",
+                command=lambda v=value, l=label: self._on_speed_preset(l, v),
+            )
+            btn.pack(side="left", padx=2)
+            self._speed_buttons[label] = btn
         row += 1
 
         # Output Name (auto-generated, editable)
@@ -225,6 +283,102 @@ class ClipMakerApp:
         for var in (self.start_var, self.end_var, self.speed_var):
             var.trace_add("write", lambda *_: self._update_output_name())
 
+    def _setup_slider_sync(self):
+        """Sync text fields to sliders when user types."""
+        self.start_var.trace_add("write", lambda *_: self._on_start_text_change())
+        self.end_var.trace_add("write", lambda *_: self._on_end_text_change())
+        self.speed_var.trace_add("write", lambda *_: self._on_speed_text_change())
+
+    def _on_start_slider_move(self, val):
+        """Slider moved — update text field."""
+        self._syncing_slider = True
+        self.start_var.set(seconds_to_timestamp(float(val)))
+        self._syncing_slider = False
+
+    def _on_end_slider_move(self, val):
+        """Slider moved — update text field."""
+        self._syncing_slider = True
+        self.end_var.set(seconds_to_timestamp(float(val)))
+        self._syncing_slider = False
+
+    def _on_start_text_change(self):
+        """Text field changed — update slider."""
+        if self._syncing_slider or self.video_duration == 0:
+            return
+        try:
+            secs = parse_timestamp(self.start_var.get())
+            secs = min(secs, self.video_duration)
+            self.start_slider.set(secs)
+        except ValueError:
+            pass
+
+    def _on_end_text_change(self):
+        """Text field changed — update slider."""
+        if self._syncing_slider or self.video_duration == 0:
+            return
+        try:
+            secs = parse_timestamp(self.end_var.get())
+            secs = min(secs, self.video_duration)
+            self.end_slider.set(secs)
+        except ValueError:
+            pass
+
+    def _on_speed_preset(self, label, value):
+        """Speed preset button clicked."""
+        self.speed_var.set(str(value))
+        self._highlight_speed_btn(label)
+
+    def _highlight_speed_btn(self, active_label):
+        """Highlight the active speed button, unhighlight others."""
+        self._active_speed_btn = active_label
+        for lbl, btn in self._speed_buttons.items():
+            if lbl == active_label:
+                btn.config(bg="#6366f1", fg="white", relief="sunken")
+            else:
+                btn.config(bg="#e5e7eb", fg="#333", relief="groove")
+
+    def _on_speed_text_change(self):
+        """Clear speed button highlight if user manually edits speed field."""
+        if self._active_speed_btn is None:
+            return
+        current = self.speed_var.get().strip()
+        # Check if current value matches active preset
+        for label, value in self.SPEED_PRESETS:
+            if label == self._active_speed_btn:
+                if current == str(value):
+                    return
+                break
+        self._highlight_speed_btn(None)
+
+    def _probe_duration(self, filepath):
+        """Run ffprobe in background to get video duration."""
+        def _run():
+            try:
+                ffprobe = self._find_ffprobe()
+                result = subprocess.run(
+                    [ffprobe, "-v", "error", "-show_entries",
+                     "format=duration", "-of", "default=noprint_wrappers=1:nokey=1",
+                     filepath],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                duration = float(result.stdout.decode().strip())
+                self.root.after(0, self._set_duration, duration)
+            except Exception:
+                pass  # Silently fail — sliders just stay disabled
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _set_duration(self, duration):
+        """Set video duration and enable/configure sliders."""
+        self.video_duration = int(duration)
+        self.start_slider.config(to=self.video_duration, state="normal")
+        self.end_slider.config(to=self.video_duration, state="normal")
+        self.start_slider.set(0)
+        self.end_slider.set(self.video_duration)
+        self._syncing_slider = True
+        self.end_var.set(seconds_to_timestamp(self.video_duration))
+        self._syncing_slider = False
+
     def _on_drop(self, files):
         """Handle files dropped onto the window."""
         if files:
@@ -235,6 +389,7 @@ class ClipMakerApp:
             self.file_var.set(path)
             self._update_drop_zone(path)
             self._update_output_name()
+            self._probe_duration(path)
 
     def _update_drop_zone(self, path):
         """Update the drop zone appearance after a file is selected."""
@@ -254,6 +409,7 @@ class ClipMakerApp:
             self.file_var.set(path)
             self._update_drop_zone(path)
             self._update_output_name()
+            self._probe_duration(path)
 
     def _format_ts_for_filename(self, ts):
         """Convert H:MM:SS to H.MM.SS for filenames."""
@@ -293,6 +449,10 @@ class ClipMakerApp:
         end_str = self.end_var.get().strip()
         start_secs = parse_timestamp(start_str)
         end_secs = parse_timestamp(end_str)
+        if self.video_duration > 0 and end_secs > self.video_duration:
+            end_secs = self.video_duration
+            end_str = seconds_to_timestamp(end_secs)
+            self.end_var.set(end_str)
         if end_secs <= start_secs:
             raise ValueError("End time must be after start time.")
 
