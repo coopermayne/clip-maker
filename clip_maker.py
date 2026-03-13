@@ -1,5 +1,5 @@
 """
-Video Clip Maker — A simple GUI for clipping and slowing down videos with ffmpeg.
+Video Clip Maker v2.0 — A modern GUI for clipping and slowing down videos with ffmpeg.
 """
 
 import os
@@ -8,13 +8,26 @@ import sys
 import subprocess
 import threading
 import tkinter as tk
-from tkinter import ttk, filedialog
+from tkinter import filedialog
+
+import customtkinter as ctk
 
 try:
     import windnd
     HAS_DND = True
 except ImportError:
     HAS_DND = False
+
+# --- Theme ---
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
+
+ACCENT = "#6366f1"
+ACCENT_HOVER = "#4f46e5"
+SUCCESS = "#16a34a"
+WARNING = "#d97706"
+ERROR = "#dc2626"
+MUTED = "#94a3b8"
 
 
 def resource_path(filename):
@@ -73,9 +86,6 @@ def seconds_to_timestamp(secs):
 
 
 class ClipMakerApp:
-    PADDING = 20
-    FIELD_PAD = 8
-
     SPEED_PRESETS = [
         ("1x", 1.0),
         ("75%", 0.75),
@@ -89,13 +99,11 @@ class ClipMakerApp:
         self.root = root
         self.root.title("Video Clip Maker")
         self.root.resizable(False, False)
-        self.root.configure(bg="#f5f5f5")
 
         self.ffmpeg_path = self._find_ffmpeg()
         self.video_duration = 0
         self._syncing_slider = False
         self._active_speed_btn = None
-        self._setup_styles()
         self._build_ui()
         self._setup_auto_name()
         self._setup_slider_sync()
@@ -116,24 +124,6 @@ class ClipMakerApp:
                 return path
         return "ffprobe"
 
-    def _setup_styles(self):
-        style = ttk.Style()
-        style.theme_use("aqua" if sys.platform == "darwin" else "clam")
-
-        bg = "#f5f5f5"
-        style.configure("TFrame", background=bg)
-        style.configure("TLabel", background=bg, font=("Helvetica", 13))
-        style.configure("Hint.TLabel", background=bg, foreground="#888888", font=("Helvetica", 11))
-        style.configure("Title.TLabel", background=bg, font=("Helvetica", 18, "bold"))
-        style.configure("Status.TLabel", background=bg, font=("Helvetica", 12))
-        style.configure("TButton", font=("Helvetica", 13))
-        style.configure(
-            "Start.TButton",
-            font=("Helvetica", 14, "bold"),
-            padding=(20, 8),
-        )
-        style.configure("TEntry", font=("Helvetica", 13))
-
     def _center_window(self):
         w = self.root.winfo_width()
         h = self.root.winfo_height()
@@ -142,173 +132,191 @@ class ClipMakerApp:
         self.root.geometry(f"+{x}+{y}")
 
     def _build_ui(self):
-        p = self.PADDING
-        fp = self.FIELD_PAD
+        pad = 24
 
-        outer = ttk.Frame(self.root, padding=(p, p, p, p))
-        outer.pack(fill="both", expand=True)
+        outer = ctk.CTkFrame(self.root, fg_color="transparent")
+        outer.pack(fill="both", expand=True, padx=pad, pady=pad)
 
         # --- Title ---
-        ttk.Label(outer, text="Video Clip Maker", style="Title.TLabel").pack(pady=(0, 16))
+        ctk.CTkLabel(
+            outer, text="Video Clip Maker",
+            font=ctk.CTkFont(size=22, weight="bold"),
+        ).pack(pady=(0, 4))
+        ctk.CTkLabel(
+            outer, text="Clip and slow-mo your videos",
+            font=ctk.CTkFont(size=13), text_color=MUTED,
+        ).pack(pady=(0, 16))
 
         # --- Separator ---
-        ttk.Separator(outer, orient="horizontal").pack(fill="x", pady=(0, 12))
+        ctk.CTkFrame(outer, height=2, fg_color=("gray80", "gray30")).pack(fill="x", pady=(0, 16))
 
-        # --- Form grid ---
-        form = ttk.Frame(outer)
+        # --- Drop zone ---
+        self.file_var = tk.StringVar()
+
+        self._drop_frame = ctk.CTkFrame(
+            outer, corner_radius=12, border_width=2,
+            border_color=ACCENT, fg_color=("gray92", "gray20"),
+            height=80, cursor="hand2",
+        )
+        self._drop_frame.pack(fill="x", pady=(0, 4))
+        self._drop_frame.pack_propagate(False)
+
+        self.drop_label = ctk.CTkLabel(
+            self._drop_frame,
+            text="Drag & drop a video file here\nor click to Browse",
+            font=ctk.CTkFont(size=13), text_color=ACCENT,
+        )
+        self.drop_label.pack(expand=True)
+
+        self._drop_frame.bind("<Button-1>", lambda e: self._browse())
+        self.drop_label.bind("<Button-1>", lambda e: self._browse())
+
+        self.file_label = ctk.CTkLabel(
+            outer, textvariable=self.file_var,
+            font=ctk.CTkFont(size=11), text_color=MUTED,
+            anchor="w", wraplength=460,
+        )
+        self.file_label.pack(fill="x", pady=(0, 12))
+
+        if HAS_DND:
+            windnd.hook_dropfiles(self._drop_frame, self._on_drop)
+            windnd.hook_dropfiles(self.drop_label, self._on_drop)
+
+        # --- Form ---
+        form = ctk.CTkFrame(outer, fg_color="transparent")
         form.pack(fill="x")
         form.columnconfigure(1, weight=1)
 
         row = 0
 
-        # Video File — drop zone + browse
-        self.file_var = tk.StringVar()
-        drop_frame = tk.Frame(form, bg="#e0e7ff", highlightbackground="#6366f1",
-                              highlightthickness=2, cursor="hand2")
-        drop_frame.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(fp, 4))
-        drop_frame.columnconfigure(0, weight=1)
-
-        self.drop_label = tk.Label(
-            drop_frame, text="Drag & drop a video file here\nor click Browse",
-            bg="#e0e7ff", fg="#4338ca", font=("Helvetica", 12), pady=18,
-        )
-        self.drop_label.pack(fill="both", expand=True)
-        drop_frame.bind("<Button-1>", lambda e: self._browse())
-        self.drop_label.bind("<Button-1>", lambda e: self._browse())
-
-        self.file_label = tk.Label(
-            form, textvariable=self.file_var, bg="#f5f5f5", fg="#333",
-            font=("Helvetica", 10), anchor="w", wraplength=400,
-        )
-        self.file_label.grid(row=row + 1, column=0, columnspan=2, sticky="ew", pady=(0, fp))
-
-        if HAS_DND:
-            windnd.hook_dropfiles(drop_frame, self._on_drop)
-            windnd.hook_dropfiles(self.drop_label, self._on_drop)
-
-        self._drop_frame = drop_frame
-        row += 2
-
         # Start Time
-        ttk.Label(form, text="Start Time:").grid(row=row, column=0, sticky="w", pady=fp)
-        start_frame = ttk.Frame(form)
-        start_frame.grid(row=row, column=1, sticky="ew", pady=fp, padx=(8, 0))
+        ctk.CTkLabel(form, text="Start Time", font=ctk.CTkFont(size=13)).grid(
+            row=row, column=0, sticky="w", pady=8)
+        start_frame = ctk.CTkFrame(form, fg_color="transparent")
+        start_frame.grid(row=row, column=1, sticky="ew", pady=8, padx=(12, 0))
         self.start_var = tk.StringVar(value="0:00:00")
-        ttk.Entry(start_frame, textvariable=self.start_var, width=10, font=("Helvetica", 13)).pack(side="left")
-        self.start_slider = tk.Scale(
-            start_frame, from_=0, to=1, orient="horizontal", length=200,
-            resolution=1, showvalue=False, sliderlength=20,
-            bg="#f5f5f5", troughcolor="#d1d5db", highlightthickness=0,
-            command=self._on_start_slider_move,
+        ctk.CTkEntry(start_frame, textvariable=self.start_var, width=100,
+                      font=ctk.CTkFont(size=13)).pack(side="left")
+        self.start_slider = ctk.CTkSlider(
+            start_frame, from_=0, to=1, width=220,
+            command=self._on_start_slider_move, state="disabled",
+            button_color=ACCENT, button_hover_color=ACCENT_HOVER,
+            progress_color=ACCENT,
         )
-        self.start_slider.pack(side="left", padx=(10, 0), fill="x", expand=True)
-        self.start_slider.config(state="disabled")
+        self.start_slider.pack(side="left", padx=(12, 0), fill="x", expand=True)
         row += 1
 
         # End Time
-        ttk.Label(form, text="End Time:").grid(row=row, column=0, sticky="w", pady=fp)
-        end_frame = ttk.Frame(form)
-        end_frame.grid(row=row, column=1, sticky="ew", pady=fp, padx=(8, 0))
+        ctk.CTkLabel(form, text="End Time", font=ctk.CTkFont(size=13)).grid(
+            row=row, column=0, sticky="w", pady=8)
+        end_frame = ctk.CTkFrame(form, fg_color="transparent")
+        end_frame.grid(row=row, column=1, sticky="ew", pady=8, padx=(12, 0))
         self.end_var = tk.StringVar(value="0:00:00")
-        ttk.Entry(end_frame, textvariable=self.end_var, width=10, font=("Helvetica", 13)).pack(side="left")
-        self.end_slider = tk.Scale(
-            end_frame, from_=0, to=1, orient="horizontal", length=200,
-            resolution=1, showvalue=False, sliderlength=20,
-            bg="#f5f5f5", troughcolor="#d1d5db", highlightthickness=0,
-            command=self._on_end_slider_move,
+        ctk.CTkEntry(end_frame, textvariable=self.end_var, width=100,
+                      font=ctk.CTkFont(size=13)).pack(side="left")
+        self.end_slider = ctk.CTkSlider(
+            end_frame, from_=0, to=1, width=220,
+            command=self._on_end_slider_move, state="disabled",
+            button_color=ACCENT, button_hover_color=ACCENT_HOVER,
+            progress_color=ACCENT,
         )
-        self.end_slider.pack(side="left", padx=(10, 0), fill="x", expand=True)
-        self.end_slider.config(state="disabled")
+        self.end_slider.pack(side="left", padx=(12, 0), fill="x", expand=True)
         row += 1
 
         # Speed
-        ttk.Label(form, text="Speed:").grid(row=row, column=0, sticky="w", pady=fp)
-        speed_frame = ttk.Frame(form)
-        speed_frame.grid(row=row, column=1, sticky="w", pady=fp, padx=(8, 0))
+        ctk.CTkLabel(form, text="Speed", font=ctk.CTkFont(size=13)).grid(
+            row=row, column=0, sticky="w", pady=8)
+        speed_frame = ctk.CTkFrame(form, fg_color="transparent")
+        speed_frame.grid(row=row, column=1, sticky="w", pady=8, padx=(12, 0))
         self.speed_var = tk.StringVar(value="1")
-        ttk.Entry(speed_frame, textvariable=self.speed_var, width=6, font=("Helvetica", 13)).pack(side="left")
-        ttk.Label(speed_frame, text="1 = normal, .5 = half speed", style="Hint.TLabel").pack(
-            side="left", padx=(10, 0)
-        )
+        ctk.CTkEntry(speed_frame, textvariable=self.speed_var, width=70,
+                      font=ctk.CTkFont(size=13)).pack(side="left")
+        ctk.CTkLabel(speed_frame, text="1 = normal, .5 = half speed",
+                      font=ctk.CTkFont(size=11), text_color=MUTED).pack(
+            side="left", padx=(12, 0))
         row += 1
 
         # Speed preset buttons
-        preset_frame = ttk.Frame(form)
-        preset_frame.grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, fp), padx=(0, 0))
-        ttk.Label(preset_frame, text="Presets:", style="Hint.TLabel").pack(side="left", padx=(0, 8))
+        preset_frame = ctk.CTkFrame(form, fg_color="transparent")
+        preset_frame.grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        ctk.CTkLabel(preset_frame, text="Presets:",
+                      font=ctk.CTkFont(size=11), text_color=MUTED).pack(
+            side="left", padx=(0, 8))
         self._speed_buttons = {}
         for label, value in self.SPEED_PRESETS:
-            btn = tk.Button(
-                preset_frame, text=label, font=("Helvetica", 11), width=4,
-                relief="groove", bg="#e5e7eb", fg="#333", cursor="hand2",
+            btn = ctk.CTkButton(
+                preset_frame, text=label, width=50, height=28,
+                font=ctk.CTkFont(size=12), corner_radius=6,
+                fg_color=("gray78", "gray30"), text_color=("gray20", "gray90"),
+                hover_color=("gray70", "gray40"),
                 command=lambda v=value, l=label: self._on_speed_preset(l, v),
             )
-            btn.pack(side="left", padx=2)
+            btn.pack(side="left", padx=3)
             self._speed_buttons[label] = btn
         row += 1
 
-        # Output Name (auto-generated, editable)
-        ttk.Label(form, text="Output Name:").grid(row=row, column=0, sticky="w", pady=fp)
-        out_frame = ttk.Frame(form)
-        out_frame.grid(row=row, column=1, sticky="ew", pady=fp, padx=(8, 0))
-        out_frame.columnconfigure(0, weight=1)
+        # Output Name
+        ctk.CTkLabel(form, text="Output Name", font=ctk.CTkFont(size=13)).grid(
+            row=row, column=0, sticky="w", pady=8)
+        out_frame = ctk.CTkFrame(form, fg_color="transparent")
+        out_frame.grid(row=row, column=1, sticky="ew", pady=8, padx=(12, 0))
         self.out_var = tk.StringVar()
-        ttk.Entry(out_frame, textvariable=self.out_var, font=("Helvetica", 13)).pack(side="left", fill="x", expand=True)
-        ttk.Label(out_frame, text=".mp4", style="Hint.TLabel").pack(side="left", padx=(4, 0))
+        ctk.CTkEntry(out_frame, textvariable=self.out_var,
+                      font=ctk.CTkFont(size=13)).pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(out_frame, text=".mp4", font=ctk.CTkFont(size=12),
+                      text_color=MUTED).pack(side="left", padx=(6, 0))
 
         # --- Separator ---
-        ttk.Separator(outer, orient="horizontal").pack(fill="x", pady=(16, 12))
+        ctk.CTkFrame(outer, height=2, fg_color=("gray80", "gray30")).pack(fill="x", pady=(16, 16))
 
         # --- Start Button ---
-        self.start_btn = ttk.Button(
-            outer, text="Start", style="Start.TButton", command=self._on_start
+        self.start_btn = ctk.CTkButton(
+            outer, text="Start", height=42,
+            font=ctk.CTkFont(size=15, weight="bold"),
+            corner_radius=10, fg_color=ACCENT, hover_color=ACCENT_HOVER,
+            command=self._on_start,
         )
-        self.start_btn.pack(pady=(0, 12))
+        self.start_btn.pack(fill="x", pady=(0, 16))
 
         # --- Status ---
-        status_frame = ttk.Frame(outer)
+        status_frame = ctk.CTkFrame(outer, fg_color="transparent")
         status_frame.pack(fill="x")
-        ttk.Label(status_frame, text="Status:", style="Status.TLabel").pack(side="left")
+        ctk.CTkLabel(status_frame, text="Status:",
+                      font=ctk.CTkFont(size=12)).pack(side="left")
         self.status_var = tk.StringVar(value="Ready")
-        self.status_label = tk.Label(
-            status_frame,
-            textvariable=self.status_var,
-            fg="#2563eb",
-            bg="#f5f5f5",
-            font=("Helvetica", 12, "bold"),
-            anchor="w",
+        self.status_label = ctk.CTkLabel(
+            status_frame, textvariable=self.status_var,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=ACCENT, anchor="w",
         )
         self.status_label.pack(side="left", padx=(8, 0))
 
+    # --- Sync logic ---
+
     def _setup_auto_name(self):
-        """Auto-update output name when timestamps or speed change."""
         for var in (self.start_var, self.end_var, self.speed_var):
             var.trace_add("write", lambda *_: self._update_output_name())
 
     def _setup_slider_sync(self):
-        """Sync text fields to sliders when user types."""
         self.start_var.trace_add("write", lambda *_: self._on_start_text_change())
         self.end_var.trace_add("write", lambda *_: self._on_end_text_change())
         self.speed_var.trace_add("write", lambda *_: self._on_speed_text_change())
 
     def _on_start_slider_move(self, val):
-        """Slider moved — update text field."""
         if self._syncing_slider:
             return
         self._syncing_slider = True
-        self.start_var.set(seconds_to_timestamp(int(float(val))))
+        self.start_var.set(seconds_to_timestamp(int(val)))
         self._syncing_slider = False
 
     def _on_end_slider_move(self, val):
-        """Slider moved — update text field."""
         if self._syncing_slider:
             return
         self._syncing_slider = True
-        self.end_var.set(seconds_to_timestamp(int(float(val))))
+        self.end_var.set(seconds_to_timestamp(int(val)))
         self._syncing_slider = False
 
     def _on_start_text_change(self):
-        """Text field changed — update slider."""
         if self._syncing_slider or self.video_duration == 0:
             return
         try:
@@ -321,7 +329,6 @@ class ClipMakerApp:
             pass
 
     def _on_end_text_change(self):
-        """Text field changed — update slider."""
         if self._syncing_slider or self.video_duration == 0:
             return
         try:
@@ -334,25 +341,24 @@ class ClipMakerApp:
             pass
 
     def _on_speed_preset(self, label, value):
-        """Speed preset button clicked."""
         self.speed_var.set(str(value))
         self._highlight_speed_btn(label)
 
     def _highlight_speed_btn(self, active_label):
-        """Highlight the active speed button, unhighlight others."""
         self._active_speed_btn = active_label
         for lbl, btn in self._speed_buttons.items():
             if lbl == active_label:
-                btn.config(bg="#6366f1", fg="white", relief="sunken")
+                btn.configure(fg_color=ACCENT, text_color="white",
+                              hover_color=ACCENT_HOVER)
             else:
-                btn.config(bg="#e5e7eb", fg="#333", relief="groove")
+                btn.configure(fg_color=("gray78", "gray30"),
+                              text_color=("gray20", "gray90"),
+                              hover_color=("gray70", "gray40"))
 
     def _on_speed_text_change(self):
-        """Clear speed button highlight if user manually edits speed field."""
         if self._active_speed_btn is None:
             return
         current = self.speed_var.get().strip()
-        # Check if current value matches active preset
         for label, value in self.SPEED_PRESETS:
             if label == self._active_speed_btn:
                 if current == str(value):
@@ -360,9 +366,10 @@ class ClipMakerApp:
                 break
         self._highlight_speed_btn(None)
 
+    # --- Duration detection ---
+
     def _probe_duration(self, filepath):
-        """Run ffprobe in background to get video duration."""
-        self._set_status("Detecting video duration...", "#d97706")
+        self._set_status("Detecting video duration...", WARNING)
 
         def _run():
             try:
@@ -377,25 +384,25 @@ class ClipMakerApp:
                 output = result.stdout.decode().strip()
                 if not output or result.returncode != 0:
                     self.root.after(0, self._set_status,
-                                    "Could not detect duration — type timestamps manually.", "#d97706")
+                                    "Could not detect duration — type timestamps manually.", WARNING)
                     return
                 duration = float(output)
                 self.root.after(0, self._set_duration, duration)
             except FileNotFoundError:
                 self.root.after(0, self._set_status,
-                                "ffprobe not found — type timestamps manually.", "#d97706")
-            except Exception as e:
+                                "ffprobe not found — type timestamps manually.", WARNING)
+            except Exception:
                 self.root.after(0, self._set_status,
-                                f"Duration detect failed — type timestamps manually.", "#d97706")
+                                "Duration detect failed — type timestamps manually.", WARNING)
         threading.Thread(target=_run, daemon=True).start()
 
     def _set_duration(self, duration):
-        """Set video duration and enable/configure sliders."""
         self.video_duration = int(duration)
-        # Reconfigure slider ranges and enable them
-        self.start_slider.config(from_=0, to=self.video_duration, state="normal")
-        self.end_slider.config(from_=0, to=self.video_duration, state="normal")
-        # Set initial positions
+        steps = max(self.video_duration, 1)
+        self.start_slider.configure(from_=0, to=self.video_duration,
+                                     number_of_steps=steps, state="normal")
+        self.end_slider.configure(from_=0, to=self.video_duration,
+                                   number_of_steps=steps, state="normal")
         self._syncing_slider = True
         self.start_slider.set(0)
         self.end_slider.set(self.video_duration)
@@ -403,25 +410,26 @@ class ClipMakerApp:
         self.end_var.set(seconds_to_timestamp(self.video_duration))
         self._syncing_slider = False
         dur_str = seconds_to_timestamp(self.video_duration)
-        self._set_status(f"Ready — video duration {dur_str}", "#2563eb")
+        self._set_status(f"Ready — video duration {dur_str}", ACCENT)
+
+    # --- File handling ---
 
     def _on_drop(self, files):
-        """Handle files dropped onto the window."""
         if files:
             path = files[0]
             if isinstance(path, bytes):
                 path = path.decode("utf-8", errors="replace")
             path = path.strip().strip('"')
             self.file_var.set(path)
-            self._update_drop_zone(path)
+            self._update_drop_zone()
             self._update_output_name()
             self._probe_duration(path)
 
-    def _update_drop_zone(self, path):
-        """Update the drop zone appearance after a file is selected."""
-        self.drop_label.config(text="File selected (drop another to change)", fg="#16a34a")
-        self._drop_frame.config(bg="#dcfce7", highlightbackground="#16a34a")
-        self.drop_label.config(bg="#dcfce7")
+    def _update_drop_zone(self):
+        self.drop_label.configure(text="File selected (drop another to change)",
+                                   text_color=SUCCESS)
+        self._drop_frame.configure(border_color=SUCCESS,
+                                    fg_color=("gray92", "gray20"))
 
     def _browse(self):
         path = filedialog.askopenfilename(
@@ -433,20 +441,17 @@ class ClipMakerApp:
         )
         if path:
             self.file_var.set(path)
-            self._update_drop_zone(path)
+            self._update_drop_zone()
             self._update_output_name()
             self._probe_duration(path)
 
     def _format_ts_for_filename(self, ts):
-        """Convert H:MM:SS to H.MM.SS for filenames."""
         return ts.strip().replace(":", ".")
 
     def _update_output_name(self):
-        """Auto-generate output name from file, timestamps, and speed."""
         input_file = self.file_var.get().strip()
         if not input_file:
             return
-        # Handle both Unix and Windows path separators
         filename = input_file.replace("\\", "/").rsplit("/", 1)[-1]
         base = os.path.splitext(filename)[0]
         start = self._format_ts_for_filename(self.start_var.get())
@@ -458,16 +463,20 @@ class ClipMakerApp:
         speed_str = f"{int(speed * 100)}pct"
         self.out_var.set(f"{base}_CLIP_{start}-{end}_{speed_str}")
 
-    def _set_status(self, msg, color="#2563eb"):
+    def _set_status(self, msg, color=ACCENT):
         self.status_var.set(msg)
-        self.status_label.config(fg=color)
+        self.status_label.configure(text_color=color)
+
+    # --- Validation & processing ---
 
     def _validate(self):
         input_file = self.file_var.get().strip().strip('"')
         if not input_file:
             raise ValueError("Please select a video file.")
-        # Allow UNC paths (\\server\share) and mapped drives — skip check for network paths
-        is_network = input_file.startswith("\\\\") or (len(input_file) >= 2 and input_file[1] == ":" and not os.path.isfile(input_file))
+        is_network = input_file.startswith("\\\\") or (
+            len(input_file) >= 2 and input_file[1] == ":"
+            and not os.path.isfile(input_file)
+        )
         if not is_network and not os.path.isfile(input_file):
             raise ValueError(f"File not found: {input_file}")
 
@@ -501,11 +510,11 @@ class ClipMakerApp:
         try:
             input_file, start, end, speed, output_path = self._validate()
         except ValueError as e:
-            self._set_status(str(e), "#dc2626")
+            self._set_status(str(e), ERROR)
             return
 
-        self.start_btn.config(state="disabled")
-        self._set_status("Processing...", "#d97706")
+        self.start_btn.configure(state="disabled")
+        self._set_status("Processing...", WARNING)
 
         cmd = build_ffmpeg_cmd(self.ffmpeg_path, input_file, start, end, speed, output_path)
         thread = threading.Thread(target=self._run_ffmpeg, args=(cmd, output_path), daemon=True)
@@ -522,25 +531,23 @@ class ClipMakerApp:
             if result.returncode != 0:
                 err = result.stderr.decode(errors="replace").strip()
                 last_line = err.split("\n")[-1] if err else "Unknown error"
-                self.root.after(0, self._set_status, f"Error: {last_line}", "#dc2626")
+                self.root.after(0, self._set_status, f"Error: {last_line}", ERROR)
             else:
                 basename = os.path.basename(output_path)
-                self.root.after(0, self._set_status, f"Done! Saved to Desktop as {basename}", "#16a34a")
+                self.root.after(0, self._set_status,
+                                f"Done! Saved to Desktop as {basename}", SUCCESS)
         except FileNotFoundError:
-            self.root.after(
-                0,
-                self._set_status,
-                "Error: ffmpeg not found. Place ffmpeg next to this app or install it.",
-                "#dc2626",
-            )
+            self.root.after(0, self._set_status,
+                            "Error: ffmpeg not found. Place ffmpeg next to this app or install it.",
+                            ERROR)
         except Exception as e:
-            self.root.after(0, self._set_status, f"Error: {e}", "#dc2626")
+            self.root.after(0, self._set_status, f"Error: {e}", ERROR)
         finally:
-            self.root.after(0, lambda: self.start_btn.config(state="normal"))
+            self.root.after(0, lambda: self.start_btn.configure(state="normal"))
 
 
 def main():
-    root = tk.Tk()
+    root = ctk.CTk()
     ClipMakerApp(root)
     root.mainloop()
 

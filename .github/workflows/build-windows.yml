@@ -19,7 +19,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install pyinstaller windnd
+        run: pip install pyinstaller windnd customtkinter
 
       - name: Download ffmpeg
         run: |
@@ -29,8 +29,22 @@ jobs:
           Get-ChildItem -Recurse -Filter ffprobe.exe -Path ffmpeg_extract | Copy-Item -Destination .
         shell: pwsh
 
+      - name: Get customtkinter path
+        id: ctk
+        run: |
+          $ctkPath = python -c "import customtkinter; import os; print(os.path.dirname(customtkinter.__file__))"
+          echo "path=$ctkPath" >> $env:GITHUB_OUTPUT
+        shell: pwsh
+
       - name: Build EXE
-        run: pyinstaller --onefile --windowed --hidden-import windnd --add-binary "ffmpeg.exe;." --add-binary "ffprobe.exe;." --name "VideoClipMaker" clip_maker.py
+        run: >
+          pyinstaller --onefile --windowed
+          --hidden-import windnd
+          --add-binary "ffmpeg.exe;."
+          --add-binary "ffprobe.exe;."
+          --add-data "${{ steps.ctk.outputs.path }};customtkinter/"
+          --name "VideoClipMaker"
+          clip_maker.py
 
       - name: Upload EXE as artifact
         uses: actions/upload-artifact@v4
@@ -50,6 +64,6 @@ jobs:
 
       - name: Create release with EXE
         run: |
-          gh release create latest dist/VideoClipMaker.exe --title "Latest Build (${{ steps.sha.outputs.short }})" --notes "Automated build from commit ${{ github.sha }}" --latest
+          gh release create latest dist/VideoClipMaker.exe --title "v2.0 (${{ steps.sha.outputs.short }})" --notes "v2.0 — Modern UI with CustomTkinter. Built from ${{ github.sha }}" --latest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
