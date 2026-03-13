@@ -179,8 +179,7 @@ class ClipMakerApp:
         self.file_label.pack(fill="x", pady=(0, 12))
 
         if HAS_DND:
-            windnd.hook_dropfiles(self._drop_frame, self._on_drop)
-            windnd.hook_dropfiles(self.drop_label, self._on_drop)
+            windnd.hook_dropfiles(self.root, self._on_drop)
 
         # --- Form ---
         form = ctk.CTkFrame(outer, fg_color="transparent")
