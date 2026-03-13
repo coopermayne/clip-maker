@@ -195,12 +195,14 @@ class ClipMakerApp:
         start_frame.grid(row=row, column=1, sticky="ew", pady=fp, padx=(8, 0))
         self.start_var = tk.StringVar(value="0:00:00")
         ttk.Entry(start_frame, textvariable=self.start_var, width=10, font=("Helvetica", 13)).pack(side="left")
-        self.start_slider = ttk.Scale(
-            start_frame, from_=0, to=0, orient="horizontal", length=200,
+        self.start_slider = tk.Scale(
+            start_frame, from_=0, to=1, orient="horizontal", length=200,
+            resolution=1, showvalue=False, sliderlength=20,
+            bg="#f5f5f5", troughcolor="#d1d5db", highlightthickness=0,
             command=self._on_start_slider_move,
         )
         self.start_slider.pack(side="left", padx=(10, 0), fill="x", expand=True)
-        self.start_slider.state(["disabled"])
+        self.start_slider.config(state="disabled")
         row += 1
 
         # End Time
@@ -209,12 +211,14 @@ class ClipMakerApp:
         end_frame.grid(row=row, column=1, sticky="ew", pady=fp, padx=(8, 0))
         self.end_var = tk.StringVar(value="0:00:00")
         ttk.Entry(end_frame, textvariable=self.end_var, width=10, font=("Helvetica", 13)).pack(side="left")
-        self.end_slider = ttk.Scale(
-            end_frame, from_=0, to=0, orient="horizontal", length=200,
+        self.end_slider = tk.Scale(
+            end_frame, from_=0, to=1, orient="horizontal", length=200,
+            resolution=1, showvalue=False, sliderlength=20,
+            bg="#f5f5f5", troughcolor="#d1d5db", highlightthickness=0,
             command=self._on_end_slider_move,
         )
         self.end_slider.pack(side="left", padx=(10, 0), fill="x", expand=True)
-        self.end_slider.state(["disabled"])
+        self.end_slider.config(state="disabled")
         row += 1
 
         # Speed
@@ -289,14 +293,18 @@ class ClipMakerApp:
 
     def _on_start_slider_move(self, val):
         """Slider moved — update text field."""
+        if self._syncing_slider:
+            return
         self._syncing_slider = True
-        self.start_var.set(seconds_to_timestamp(float(val)))
+        self.start_var.set(seconds_to_timestamp(int(float(val))))
         self._syncing_slider = False
 
     def _on_end_slider_move(self, val):
         """Slider moved — update text field."""
+        if self._syncing_slider:
+            return
         self._syncing_slider = True
-        self.end_var.set(seconds_to_timestamp(float(val)))
+        self.end_var.set(seconds_to_timestamp(int(float(val))))
         self._syncing_slider = False
 
     def _on_start_text_change(self):
@@ -306,7 +314,9 @@ class ClipMakerApp:
         try:
             secs = parse_timestamp(self.start_var.get())
             secs = min(secs, self.video_duration)
+            self._syncing_slider = True
             self.start_slider.set(secs)
+            self._syncing_slider = False
         except ValueError:
             pass
 
@@ -317,7 +327,9 @@ class ClipMakerApp:
         try:
             secs = parse_timestamp(self.end_var.get())
             secs = min(secs, self.video_duration)
+            self._syncing_slider = True
             self.end_slider.set(secs)
+            self._syncing_slider = False
         except ValueError:
             pass
 
@@ -350,6 +362,8 @@ class ClipMakerApp:
 
     def _probe_duration(self, filepath):
         """Run ffprobe in background to get video duration."""
+        self._set_status("Detecting video duration...", "#d97706")
+
         def _run():
             try:
                 ffprobe = self._find_ffprobe()
@@ -360,24 +374,36 @@ class ClipMakerApp:
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
-                duration = float(result.stdout.decode().strip())
+                output = result.stdout.decode().strip()
+                if not output or result.returncode != 0:
+                    self.root.after(0, self._set_status,
+                                    "Could not detect duration — type timestamps manually.", "#d97706")
+                    return
+                duration = float(output)
                 self.root.after(0, self._set_duration, duration)
-            except Exception:
-                pass  # Silently fail — sliders just stay disabled
+            except FileNotFoundError:
+                self.root.after(0, self._set_status,
+                                "ffprobe not found — type timestamps manually.", "#d97706")
+            except Exception as e:
+                self.root.after(0, self._set_status,
+                                f"Duration detect failed — type timestamps manually.", "#d97706")
         threading.Thread(target=_run, daemon=True).start()
 
     def _set_duration(self, duration):
         """Set video duration and enable/configure sliders."""
         self.video_duration = int(duration)
-        self.start_slider.config(to=self.video_duration)
-        self.end_slider.config(to=self.video_duration)
-        self.start_slider.state(["!disabled"])
-        self.end_slider.state(["!disabled"])
+        # Reconfigure slider ranges and enable them
+        self.start_slider.config(from_=0, to=self.video_duration, state="normal")
+        self.end_slider.config(from_=0, to=self.video_duration, state="normal")
+        # Set initial positions
+        self._syncing_slider = True
         self.start_slider.set(0)
         self.end_slider.set(self.video_duration)
-        self._syncing_slider = True
+        self.start_var.set(seconds_to_timestamp(0))
         self.end_var.set(seconds_to_timestamp(self.video_duration))
         self._syncing_slider = False
+        dur_str = seconds_to_timestamp(self.video_duration)
+        self._set_status(f"Ready — video duration {dur_str}", "#2563eb")
 
     def _on_drop(self, files):
         """Handle files dropped onto the window."""
