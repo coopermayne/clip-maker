@@ -1,5 +1,5 @@
 """
-Video Clip Maker v2.0 — A modern GUI for clipping and slowing down videos with ffmpeg.
+GalipoLaw - CopClipper v2.0 — A modern GUI for clipping and slowing down videos with ffmpeg.
 """
 
 import os
@@ -97,8 +97,13 @@ class ClipMakerApp:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("Video Clip Maker")
+        self.root.title("GalipoLaw - CopClipper")
         self.root.resizable(False, False)
+
+        # Set window icon
+        icon_path = resource_path("icon.ico")
+        if os.path.isfile(icon_path):
+            self.root.after(200, lambda: self.root.iconbitmap(icon_path))
 
         self.ffmpeg_path = self._find_ffmpeg()
         self.video_duration = 0
@@ -139,7 +144,7 @@ class ClipMakerApp:
 
         # --- Title ---
         ctk.CTkLabel(
-            outer, text="Video Clip Maker",
+            outer, text="GalipoLaw - CopClipper",
             font=ctk.CTkFont(size=22, weight="bold"),
         ).pack(pady=(0, 4))
         ctk.CTkLabel(
