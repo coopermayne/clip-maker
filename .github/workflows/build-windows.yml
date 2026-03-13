@@ -28,8 +28,24 @@ jobs:
       - name: Build EXE
         run: pyinstaller --onefile --windowed --hidden-import windnd --add-binary "ffmpeg.exe;." --name "VideoClipMaker" clip_maker.py
 
-      - name: Upload EXE
+      - name: Upload EXE as artifact
         uses: actions/upload-artifact@v4
         with:
           name: VideoClipMaker
           path: dist/VideoClipMaker.exe
+
+      - name: Get short SHA
+        id: sha
+        run: echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Delete existing latest release
+        run: gh release delete latest --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create release with EXE
+        run: |
+          gh release create latest dist/VideoClipMaker.exe --title "Latest Build (${{ steps.sha.outputs.short }})" --notes "Automated build from commit ${{ github.sha }}" --latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
