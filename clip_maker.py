@@ -282,7 +282,7 @@ class ClipMakerApp:
         pdf_fps_frame = ctk.CTkFrame(form, fg_color="transparent")
         pdf_fps_frame.grid(row=row, column=1, sticky="w", pady=8, padx=(12, 0))
         self.pdf_fps_var = tk.StringVar(value="Max (native)")
-        fps_options = ["Max (native)", "5", "10", "15", "20", "25", "30"]
+        fps_options = ["Max (native)", "5", "10", "15", "20", "25", "30", "45", "60"]
         ctk.CTkOptionMenu(
             pdf_fps_frame, variable=self.pdf_fps_var, values=fps_options,
             width=140, font=ctk.CTkFont(size=13),
