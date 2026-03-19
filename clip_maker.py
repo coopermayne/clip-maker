@@ -274,6 +274,24 @@ class ClipMakerApp:
                       font=ctk.CTkFont(size=13)).pack(side="left", fill="x", expand=True)
         ctk.CTkLabel(out_frame, text=".mp4", font=ctk.CTkFont(size=12),
                       text_color=MUTED).pack(side="left", padx=(6, 0))
+        row += 1
+
+        # PDF Frame Rate
+        ctk.CTkLabel(form, text="PDF Frame Rate", font=ctk.CTkFont(size=13)).grid(
+            row=row, column=0, sticky="w", pady=8)
+        pdf_fps_frame = ctk.CTkFrame(form, fg_color="transparent")
+        pdf_fps_frame.grid(row=row, column=1, sticky="w", pady=8, padx=(12, 0))
+        self.pdf_fps_var = tk.StringVar(value="Max (native)")
+        fps_options = ["Max (native)", "5", "10", "15", "20", "25", "30"]
+        ctk.CTkOptionMenu(
+            pdf_fps_frame, variable=self.pdf_fps_var, values=fps_options,
+            width=140, font=ctk.CTkFont(size=13),
+            fg_color=("gray78", "gray30"), button_color=ACCENT,
+            button_hover_color=ACCENT_HOVER,
+        ).pack(side="left")
+        ctk.CTkLabel(pdf_fps_frame, text="frames per second for PDF export",
+                      font=ctk.CTkFont(size=11), text_color=MUTED).pack(
+            side="left", padx=(12, 0))
 
         # --- Separator ---
         ctk.CTkFrame(outer, height=2, fg_color=("gray80", "gray30")).pack(fill="x", pady=(16, 16))
@@ -610,13 +628,18 @@ class ClipMakerApp:
             self._set_status("End time must be after start time.", ERROR)
             return
 
+        # Read desired PDF fps
+        pdf_fps_choice = self.pdf_fps_var.get()
+        use_max_fps = pdf_fps_choice == "Max (native)"
+        target_fps = None if use_max_fps else int(pdf_fps_choice)
+
         self.pdf_btn.configure(state="disabled")
         self.start_btn.configure(state="disabled")
         self._set_status("Detecting frame rate...", WARNING)
 
         def _probe_and_run():
             try:
-                fps = self._get_frame_rate(input_file)
+                native_fps = self._get_frame_rate(input_file)
             except Exception:
                 self.root.after(0, self._set_status,
                                 "Could not detect frame rate.", ERROR)
@@ -624,6 +647,8 @@ class ClipMakerApp:
                 self.root.after(0, lambda: self.start_btn.configure(state="normal"))
                 return
 
+            # Use target fps if set, but cap at native fps
+            fps = native_fps if use_max_fps else min(target_fps, native_fps)
             duration = end_secs - start_secs
             frame_count = int(math.ceil(duration * fps))
 
@@ -653,25 +678,30 @@ class ClipMakerApp:
 
             self.root.after(0, self._set_status,
                             f"Extracting {frame_count} frames...", WARNING)
-            self._run_pdf_generation(input_file, start_secs, end_secs, fps, frame_count)
+            self._run_pdf_generation(input_file, start_secs, end_secs, fps,
+                                     frame_count, use_max_fps)
 
         threading.Thread(target=_probe_and_run, daemon=True).start()
 
-    def _run_pdf_generation(self, input_file, start_secs, end_secs, fps, frame_count):
+    def _run_pdf_generation(self, input_file, start_secs, end_secs, fps,
+                            frame_count, use_max_fps):
         tmp_dir = tempfile.mkdtemp(prefix="copClipper_frames_")
         try:
             start_ts = seconds_to_timestamp(start_secs)
             end_ts = seconds_to_timestamp(end_secs)
 
-            # Extract every frame as JPEG
+            # Extract frames as JPEG
             cmd = [
                 self.ffmpeg_path, "-y",
                 "-ss", str(start_secs),
                 "-to", str(end_secs),
                 "-i", input_file,
-                "-vsync", "0",
-                os.path.join(tmp_dir, "%06d.jpg"),
             ]
+            if use_max_fps:
+                cmd += ["-vsync", "0"]
+            else:
+                cmd += ["-vf", f"fps={fps}"]
+            cmd.append(os.path.join(tmp_dir, "%06d.jpg"))
             result = subprocess.run(
                 cmd,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
