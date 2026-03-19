@@ -275,49 +275,49 @@ class ClipMakerApp:
                       font=ctk.CTkFont(size=13)).pack(side="left", fill="x", expand=True)
         ctk.CTkLabel(out_frame, text=".mp4", font=ctk.CTkFont(size=12),
                       text_color=MUTED).pack(side="left", padx=(6, 0))
-        row += 1
-
-        # PDF Frame Rate
-        ctk.CTkLabel(form, text="PDF Frame Rate", font=ctk.CTkFont(size=13)).grid(
-            row=row, column=0, sticky="w", pady=8)
-        pdf_fps_frame = ctk.CTkFrame(form, fg_color="transparent")
-        pdf_fps_frame.grid(row=row, column=1, sticky="w", pady=8, padx=(12, 0))
-        self.pdf_fps_var = tk.StringVar(value="Max (native)")
-        self.pdf_fps_menu = ctk.CTkOptionMenu(
-            pdf_fps_frame, variable=self.pdf_fps_var, values=["Max (native)"],
-            width=140, font=ctk.CTkFont(size=13),
-            fg_color=("gray78", "gray30"), button_color=ACCENT,
-            button_hover_color=ACCENT_HOVER,
-        )
-        self.pdf_fps_menu.pack(side="left")
-        ctk.CTkLabel(pdf_fps_frame, text="frames per second for PDF export",
-                      font=ctk.CTkFont(size=11), text_color=MUTED).pack(
-            side="left", padx=(12, 0))
 
         # --- Separator ---
-        ctk.CTkFrame(outer, height=2, fg_color=("gray80", "gray30")).pack(fill="x", pady=(16, 16))
+        ctk.CTkFrame(outer, height=2, fg_color=("gray80", "gray30")).pack(fill="x", pady=(16, 12))
 
-        # --- Action Buttons ---
-        btn_row = ctk.CTkFrame(outer, fg_color="transparent")
-        btn_row.pack(fill="x", pady=(0, 16))
-        btn_row.columnconfigure(0, weight=1)
-        btn_row.columnconfigure(1, weight=1)
-
+        # --- Clip Button ---
         self.start_btn = ctk.CTkButton(
-            btn_row, text="Start Clip", height=42,
+            outer, text="Start Clip", height=42,
             font=ctk.CTkFont(size=15, weight="bold"),
             corner_radius=10, fg_color=ACCENT, hover_color=ACCENT_HOVER,
             command=self._on_start,
         )
-        self.start_btn.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        self.start_btn.pack(fill="x", pady=(0, 16))
+
+        # --- PDF Section ---
+        ctk.CTkFrame(outer, height=2, fg_color=("gray80", "gray30")).pack(fill="x", pady=(0, 12))
+        ctk.CTkLabel(
+            outer, text="PDF Frame Export",
+            font=ctk.CTkFont(size=15, weight="bold"),
+        ).pack(anchor="w", pady=(0, 8))
+
+        pdf_opts = ctk.CTkFrame(outer, fg_color="transparent")
+        pdf_opts.pack(fill="x", pady=(0, 8))
+        ctk.CTkLabel(pdf_opts, text="Frame Rate",
+                      font=ctk.CTkFont(size=13)).pack(side="left")
+        self.pdf_fps_var = tk.StringVar(value="Max (native)")
+        self.pdf_fps_menu = ctk.CTkOptionMenu(
+            pdf_opts, variable=self.pdf_fps_var, values=["Max (native)"],
+            width=140, font=ctk.CTkFont(size=13),
+            fg_color=("gray78", "gray30"), button_color="#0ea5e9",
+            button_hover_color="#0284c7",
+        )
+        self.pdf_fps_menu.pack(side="left", padx=(12, 0))
+        ctk.CTkLabel(pdf_opts, text="fps",
+                      font=ctk.CTkFont(size=11), text_color=MUTED).pack(
+            side="left", padx=(8, 0))
 
         self.pdf_btn = ctk.CTkButton(
-            btn_row, text="Generate PDF", height=42,
+            outer, text="Generate PDF", height=42,
             font=ctk.CTkFont(size=15, weight="bold"),
             corner_radius=10, fg_color="#0ea5e9", hover_color="#0284c7",
             command=self._on_generate_pdf,
         )
-        self.pdf_btn.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        self.pdf_btn.pack(fill="x", pady=(0, 16))
 
         # --- Status ---
         status_frame = ctk.CTkFrame(outer, fg_color="transparent")
