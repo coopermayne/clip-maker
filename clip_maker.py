@@ -112,6 +112,7 @@ class ClipMakerApp:
 
         self.ffmpeg_path = self._find_ffmpeg()
         self.video_duration = 0
+        self.native_fps = 0
         self._syncing_slider = False
         self._active_speed_btn = None
         self._build_ui()
@@ -282,13 +283,13 @@ class ClipMakerApp:
         pdf_fps_frame = ctk.CTkFrame(form, fg_color="transparent")
         pdf_fps_frame.grid(row=row, column=1, sticky="w", pady=8, padx=(12, 0))
         self.pdf_fps_var = tk.StringVar(value="Max (native)")
-        fps_options = ["Max (native)", "5", "10", "15", "20", "25", "30", "45", "60"]
-        ctk.CTkOptionMenu(
-            pdf_fps_frame, variable=self.pdf_fps_var, values=fps_options,
+        self.pdf_fps_menu = ctk.CTkOptionMenu(
+            pdf_fps_frame, variable=self.pdf_fps_var, values=["Max (native)"],
             width=140, font=ctk.CTkFont(size=13),
             fg_color=("gray78", "gray30"), button_color=ACCENT,
             button_hover_color=ACCENT_HOVER,
-        ).pack(side="left")
+        )
+        self.pdf_fps_menu.pack(side="left")
         ctk.CTkLabel(pdf_fps_frame, text="frames per second for PDF export",
                       font=ctk.CTkFont(size=11), text_color=MUTED).pack(
             side="left", padx=(12, 0))
@@ -409,11 +410,12 @@ class ClipMakerApp:
     # --- Duration detection ---
 
     def _probe_duration(self, filepath):
-        self._set_status("Detecting video duration...", WARNING)
+        self._set_status("Detecting video info...", WARNING)
 
         def _run():
             try:
                 ffprobe = self._find_ffprobe()
+                # Probe duration
                 result = subprocess.run(
                     [ffprobe, "-v", "error", "-show_entries",
                      "format=duration", "-of", "default=noprint_wrappers=1:nokey=1",
@@ -427,7 +429,17 @@ class ClipMakerApp:
                                     "Could not detect duration — type timestamps manually.", WARNING)
                     return
                 duration = float(output)
+
+                # Probe frame rate
+                fps = 0
+                try:
+                    fps = self._get_frame_rate(filepath)
+                except Exception:
+                    pass
+
                 self.root.after(0, self._set_duration, duration)
+                if fps > 0:
+                    self.root.after(0, self._set_native_fps, fps)
             except FileNotFoundError:
                 self.root.after(0, self._set_status,
                                 "ffprobe not found — type timestamps manually.", WARNING)
@@ -435,6 +447,15 @@ class ClipMakerApp:
                 self.root.after(0, self._set_status,
                                 "Duration detect failed — type timestamps manually.", WARNING)
         threading.Thread(target=_run, daemon=True).start()
+
+    def _set_native_fps(self, fps):
+        self.native_fps = fps
+        # Build dropdown options: only include rates <= native fps
+        all_rates = [10, 30, 60]
+        options = [str(r) for r in all_rates if r <= fps]
+        options.append("Max (native)")
+        self.pdf_fps_var.set("Max (native)")
+        self.pdf_fps_menu.configure(values=options)
 
     def _set_duration(self, duration):
         self.video_duration = int(duration)
