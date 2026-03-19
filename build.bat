@@ -3,6 +3,7 @@ echo Building Video Clip Maker...
 echo.
 echo Make sure ffmpeg.exe is in this folder before building.
 echo.
+pip install Pillow >nul 2>&1
 
 pyinstaller --onefile --windowed --add-binary "ffmpeg.exe;." --name "VideoClipMaker" clip_maker.py
 

@@ -2,13 +2,18 @@
 GalipoLaw - CopClipper v2.0 — A modern GUI for clipping and slowing down videos with ffmpeg.
 """
 
+import math
 import os
 import re
+import shutil
 import sys
 import subprocess
+import tempfile
 import threading
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
+
+from PIL import Image, ImageDraw, ImageFont
 
 import customtkinter as ctk
 
@@ -273,14 +278,27 @@ class ClipMakerApp:
         # --- Separator ---
         ctk.CTkFrame(outer, height=2, fg_color=("gray80", "gray30")).pack(fill="x", pady=(16, 16))
 
-        # --- Start Button ---
+        # --- Action Buttons ---
+        btn_row = ctk.CTkFrame(outer, fg_color="transparent")
+        btn_row.pack(fill="x", pady=(0, 16))
+        btn_row.columnconfigure(0, weight=1)
+        btn_row.columnconfigure(1, weight=1)
+
         self.start_btn = ctk.CTkButton(
-            outer, text="Start", height=42,
+            btn_row, text="Start Clip", height=42,
             font=ctk.CTkFont(size=15, weight="bold"),
             corner_radius=10, fg_color=ACCENT, hover_color=ACCENT_HOVER,
             command=self._on_start,
         )
-        self.start_btn.pack(fill="x", pady=(0, 16))
+        self.start_btn.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+
+        self.pdf_btn = ctk.CTkButton(
+            btn_row, text="Generate PDF", height=42,
+            font=ctk.CTkFont(size=15, weight="bold"),
+            corner_radius=10, fg_color="#0ea5e9", hover_color="#0284c7",
+            command=self._on_generate_pdf,
+        )
+        self.pdf_btn.grid(row=0, column=1, sticky="ew", padx=(6, 0))
 
         # --- Status ---
         status_frame = ctk.CTkFrame(outer, fg_color="transparent")
@@ -518,6 +536,7 @@ class ClipMakerApp:
             return
 
         self.start_btn.configure(state="disabled")
+        self.pdf_btn.configure(state="disabled")
         self._set_status("Processing...", WARNING)
 
         cmd = build_ffmpeg_cmd(self.ffmpeg_path, input_file, start, end, speed, output_path)
@@ -547,6 +566,211 @@ class ClipMakerApp:
         except Exception as e:
             self.root.after(0, self._set_status, f"Error: {e}", ERROR)
         finally:
+            self.root.after(0, lambda: self.start_btn.configure(state="normal"))
+            self.root.after(0, lambda: self.pdf_btn.configure(state="normal"))
+
+    # --- PDF generation ---
+
+    def _get_frame_rate(self, filepath):
+        """Use ffprobe to get the video frame rate. Returns float fps."""
+        ffprobe = self._find_ffprobe()
+        result = subprocess.run(
+            [ffprobe, "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=r_frame_rate",
+             "-of", "default=noprint_wrappers=1:nokey=1", filepath],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        output = result.stdout.decode().strip()
+        if not output or result.returncode != 0:
+            raise RuntimeError("Could not detect frame rate.")
+        # ffprobe returns fraction like "30000/1001" or "25/1"
+        if "/" in output:
+            num, den = output.split("/")
+            return float(num) / float(den)
+        return float(output)
+
+    def _on_generate_pdf(self):
+        # Validate file and timestamps
+        input_file = self.file_var.get().strip().strip('"')
+        if not input_file:
+            self._set_status("Please select a video file.", ERROR)
+            return
+
+        try:
+            start_secs = parse_timestamp(self.start_var.get())
+            end_secs = parse_timestamp(self.end_var.get())
+        except ValueError as e:
+            self._set_status(str(e), ERROR)
+            return
+
+        if self.video_duration > 0 and end_secs > self.video_duration:
+            end_secs = self.video_duration
+        if end_secs <= start_secs:
+            self._set_status("End time must be after start time.", ERROR)
+            return
+
+        self.pdf_btn.configure(state="disabled")
+        self.start_btn.configure(state="disabled")
+        self._set_status("Detecting frame rate...", WARNING)
+
+        def _probe_and_run():
+            try:
+                fps = self._get_frame_rate(input_file)
+            except Exception:
+                self.root.after(0, self._set_status,
+                                "Could not detect frame rate.", ERROR)
+                self.root.after(0, lambda: self.pdf_btn.configure(state="normal"))
+                self.root.after(0, lambda: self.start_btn.configure(state="normal"))
+                return
+
+            duration = end_secs - start_secs
+            frame_count = int(math.ceil(duration * fps))
+
+            if frame_count > 500:
+                # Ask confirmation on the main thread
+                proceed = [False]
+                event = threading.Event()
+
+                def _ask():
+                    proceed[0] = messagebox.askyesno(
+                        "Large PDF Warning",
+                        f"This will generate {frame_count} pages "
+                        f"({fps:.2f} fps × {duration}s).\n\n"
+                        f"This may take a while and produce a large file.\n"
+                        f"Continue?",
+                    )
+                    event.set()
+
+                self.root.after(0, _ask)
+                event.wait()
+
+                if not proceed[0]:
+                    self.root.after(0, self._set_status, "PDF generation cancelled.", ACCENT)
+                    self.root.after(0, lambda: self.pdf_btn.configure(state="normal"))
+                    self.root.after(0, lambda: self.start_btn.configure(state="normal"))
+                    return
+
+            self.root.after(0, self._set_status,
+                            f"Extracting {frame_count} frames...", WARNING)
+            self._run_pdf_generation(input_file, start_secs, end_secs, fps, frame_count)
+
+        threading.Thread(target=_probe_and_run, daemon=True).start()
+
+    def _run_pdf_generation(self, input_file, start_secs, end_secs, fps, frame_count):
+        tmp_dir = tempfile.mkdtemp(prefix="copClipper_frames_")
+        try:
+            start_ts = seconds_to_timestamp(start_secs)
+            end_ts = seconds_to_timestamp(end_secs)
+
+            # Extract every frame as JPEG
+            cmd = [
+                self.ffmpeg_path, "-y",
+                "-ss", str(start_secs),
+                "-to", str(end_secs),
+                "-i", input_file,
+                "-vsync", "0",
+                os.path.join(tmp_dir, "%06d.jpg"),
+            ]
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if result.returncode != 0:
+                err = result.stderr.decode(errors="replace").strip().split("\n")[-1]
+                self.root.after(0, self._set_status, f"Error extracting frames: {err}", ERROR)
+                return
+
+            # Gather extracted frame files in order
+            frame_files = sorted(
+                f for f in os.listdir(tmp_dir) if f.endswith(".jpg")
+            )
+            if not frame_files:
+                self.root.after(0, self._set_status, "No frames extracted.", ERROR)
+                return
+
+            total = len(frame_files)
+            self.root.after(0, self._set_status,
+                            f"Building PDF from {total} frames...", WARNING)
+
+            # Build PDF pages
+            pdf_pages = []
+            for idx, fname in enumerate(frame_files):
+                frame_path = os.path.join(tmp_dir, fname)
+                img = Image.open(frame_path).convert("RGB")
+                w, h = img.size
+
+                # Calculate timestamp for this frame
+                frame_time = start_secs + (idx / fps)
+                total_secs = int(frame_time)
+                millis = int(round((frame_time - total_secs) * 1000))
+                ts_h = total_secs // 3600
+                ts_m = (total_secs % 3600) // 60
+                ts_s = total_secs % 60
+                timestamp_str = f"{ts_h}:{ts_m:02d}:{ts_s:02d}.{millis:03d}"
+
+                label = f"Frame {idx + 1} / {total}    |    {timestamp_str}    |    {fps:.2f} fps"
+
+                # Draw label bar at bottom
+                bar_height = max(36, int(h * 0.04))
+                font_size = max(14, bar_height - 12)
+
+                # Try to load a reasonable font size
+                try:
+                    font = ImageFont.truetype("arial.ttf", font_size)
+                except OSError:
+                    try:
+                        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", font_size)
+                    except OSError:
+                        font = ImageFont.load_default()
+
+                # Create new image with bar
+                new_h = h + bar_height
+                page = Image.new("RGB", (w, new_h), (24, 24, 32))
+                page.paste(img, (0, 0))
+
+                draw = ImageDraw.Draw(page)
+                # Center text in bar
+                bbox = draw.textbbox((0, 0), label, font=font)
+                text_w = bbox[2] - bbox[0]
+                text_h = bbox[3] - bbox[1]
+                text_x = (w - text_w) // 2
+                text_y = h + (bar_height - text_h) // 2
+                draw.text((text_x, text_y), label, fill=(220, 220, 230), font=font)
+
+                pdf_pages.append(page)
+
+                # Update status every 50 frames
+                if idx % 50 == 0 and idx > 0:
+                    self.root.after(0, self._set_status,
+                                    f"Building PDF... {idx}/{total} frames", WARNING)
+
+            # Build output filename
+            filename = input_file.replace("\\", "/").rsplit("/", 1)[-1]
+            base = os.path.splitext(filename)[0]
+            safe_start = self._format_ts_for_filename(seconds_to_timestamp(start_secs))
+            safe_end = self._format_ts_for_filename(seconds_to_timestamp(end_secs))
+            out_name = re.sub(r'[<>:"/\\|?*]', "_",
+                              f"{base}_FRAMES_{safe_start}-{safe_end}")
+            output_path = os.path.join(get_desktop_path(), out_name + ".pdf")
+
+            # Save as multi-page PDF
+            self.root.after(0, self._set_status, "Saving PDF...", WARNING)
+            pdf_pages[0].save(
+                output_path, "PDF", save_all=True,
+                append_images=pdf_pages[1:], resolution=100.0,
+            )
+
+            basename = os.path.basename(output_path)
+            self.root.after(0, self._set_status,
+                            f"Done! Saved {total}-page PDF to Desktop as {basename}", SUCCESS)
+
+        except Exception as e:
+            self.root.after(0, self._set_status, f"PDF Error: {e}", ERROR)
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            self.root.after(0, lambda: self.pdf_btn.configure(state="normal"))
             self.root.after(0, lambda: self.start_btn.configure(state="normal"))
 
 

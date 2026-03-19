@@ -19,7 +19,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install pyinstaller windnd customtkinter
+        run: pip install pyinstaller windnd customtkinter Pillow
 
       - name: Download ffmpeg
         run: |
