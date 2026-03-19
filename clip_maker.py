@@ -452,9 +452,12 @@ class ClipMakerApp:
         self.native_fps = fps
         # Build dropdown options: only include rates <= native fps
         all_rates = [10, 30, 60]
+        # Display native fps rounded nicely (e.g. 29.97, 60, 25)
+        fps_display = f"{fps:.2f}".rstrip("0").rstrip(".")
+        max_label = f"Max ({fps_display})"
         options = [str(r) for r in all_rates if r <= fps]
-        options.append("Max (native)")
-        self.pdf_fps_var.set("Max (native)")
+        options.append(max_label)
+        self.pdf_fps_var.set(max_label)
         self.pdf_fps_menu.configure(values=options)
 
     def _set_duration(self, duration):
@@ -651,7 +654,7 @@ class ClipMakerApp:
 
         # Read desired PDF fps
         pdf_fps_choice = self.pdf_fps_var.get()
-        use_max_fps = pdf_fps_choice == "Max (native)"
+        use_max_fps = pdf_fps_choice.startswith("Max")
         target_fps = None if use_max_fps else int(pdf_fps_choice)
 
         self.pdf_btn.configure(state="disabled")
